@@ -1,0 +1,67 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Token jumpscare settings</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:14px;color:#ddd;font-size:14px}
+  h3{margin:14px 0 6px;font-size:14px;border-bottom:1px solid #555;padding-bottom:3px}
+  label{display:block;margin:8px 0 2px} input[type=text],input[type=number],select{width:100%;box-sizing:border-box}
+  .row{display:flex;gap:8px} .row>*{flex:1} button{cursor:pointer;margin:12px 6px 0 0;padding:6px 12px}
+  small{opacity:.65;display:block;margin-top:2px} .hide{display:none}
+  img#prev{max-width:100%;max-height:110px;margin-top:6px;display:none}
+</style></head>
+<body>
+  <h3>Range (vision / trigger area)</h3>
+  <div class="row">
+    <div><label>Range (grid cells)</label><input id="range" type="number" min="0" step="0.5"></div>
+    <div><label>Shape</label><select id="shape"><option value="circle">Circle (around)</option><option value="cone">Cone (in front)</option></select></div>
+  </div>
+  <div id="coneRow" class="hide"><label>Cone angle (degrees)</label><input id="angle" type="number" min="5" max="360"></div>
+  <small>Cone faces the token's top; rotate the token to aim it. 0 = no range. For normal creatures the range reveals fog and is what they can "see". For jumpscare creatures it is the trigger zone and does NOT reveal fog.</small>
+
+  <h3>Jumpscare</h3>
+  <label><input id="js" type="checkbox"> This creature is a jumpscare creature</label>
+  <div id="scareOpts" class="hide">
+    <label>Image / GIF URL</label><input id="image" type="text" placeholder="scare.jpg or https://…/monster.gif">
+    <img id="prev" alt="">
+    <label>Sound URL</label><input id="sound" type="text" placeholder="scare.mp3 or https://…/scream.mp3">
+    <label>Duration (seconds)</label><input id="duration" type="number" min="0.5" max="15" step="0.5">
+    <small>Leave empty for the default. Relative paths point to files in your extension's GitHub repo.</small>
+  </div>
+
+  <button id="save">Save</button><button id="test">Save &amp; test</button><button id="cancel">Close</button>
+
+<script type="module">
+  import { OBR, CFG_KEY, SETTINGS_MODAL, DEFAULT_CFG, getCfg, base, showScare } from "./shared.js";
+  const $ = (id) => document.getElementById(id);
+  const itemId = new URLSearchParams(location.search).get("id");
+
+  function sync() {
+    $("coneRow").classList.toggle("hide", $("shape").value !== "cone");
+    $("scareOpts").classList.toggle("hide", !$("js").checked);
+    const img = $("image").value.trim();
+    $("prev").style.display = img ? "block" : "none";
+    if (img) $("prev").src = new URL(img, base("x")).href;
+  }
+  const read = () => ({
+    jumpscare: $("js").checked,
+    range: Math.max(0, Number($("range").value) || 0),
+    shape: $("shape").value,
+    angle: Number($("angle").value) || DEFAULT_CFG.angle,
+    image: $("image").value.trim(),
+    sound: $("sound").value.trim(),
+    duration: Number($("duration").value) || DEFAULT_CFG.duration,
+  });
+  const save = () => OBR.scene.items.updateItems([itemId], (its) => { its[0].metadata[CFG_KEY] = read(); });
+
+  OBR.onReady(async () => {
+    const [item] = await OBR.scene.items.getItems([itemId]);
+    const c = getCfg(item);
+    $("js").checked = c.jumpscare; $("range").value = c.range; $("shape").value = c.shape;
+    $("angle").value = c.angle; $("image").value = c.image; $("sound").value = c.sound; $("duration").value = c.duration;
+    sync();
+    for (const id of ["shape", "js", "image"]) $(id).addEventListener("input", sync);
+    $("save").onclick = async () => { await save(); OBR.modal.close(SETTINGS_MODAL); };
+    $("cancel").onclick = () => OBR.modal.close(SETTINGS_MODAL);
+    $("test").onclick = async () => { const cfg = read(); await save(); await OBR.modal.close(SETTINGS_MODAL); showScare(cfg); };
+  });
+</script>
+</body></html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #flash{position:fixed;inset:0;background:#f00;pointer-events:none;animation:flash .15s 6 alternate}
+  #pic,#fallback{position:fixed;inset:0;margin:auto;max-width:100%;max-height:100%;animation:shake .08s infinite,zoom 2.5s ease-out forwards}
+  #fallback{display:none;font-size:60vmin;text-align:center;line-height:100vh}
+  @keyframes flash{from{opacity:1}to{opacity:0}}
+  @keyframes shake{0%{transform:translate(0,0)}25%{transform:translate(-12px,8px)}50%{transform:translate(10px,-10px)}75%{transform:translate(-8px,-6px)}100%{transform:translate(8px,10px)}}
+  @keyframes zoom{from{scale:.6}to{scale:1.4}}
+</style></head>
+<body>
+  <img id="pic" alt="">
+  <div id="fallback">👁️</div>
+  <div id="flash"></div>
+  <audio id="snd"></audio>
+<script type="module">
+  import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
+  const SCARE_MODAL = "com.rattusmaggus.jumpscare/scare";   // must match shared.js
+  const q = new URLSearchParams(location.search);
+  const resolve = (v, dflt) => new URL(v || dflt, location.href).href;
+
+  const pic = document.getElementById("pic");
+  pic.onerror = () => { pic.style.display = "none"; document.getElementById("fallback").style.display = "block"; };
+  pic.src = resolve(q.get("img"), "scare.jpg");
+
+  const snd = document.getElementById("snd");
+  const noise = () => {                    // fallback: synthesized noise burst
+    try {
+      const ctx = new AudioContext();
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 1.2, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); s.start();
+    } catch {}
+  };
+  snd.onerror = noise;
+  snd.src = resolve(q.get("snd"), "scare.mp3");
+  snd.play().catch(noise);
+
+  OBR.onReady(() => {
+    const close = () => OBR.modal.close(SCARE_MODAL);
+    setTimeout(close, (Number(q.get("dur")) || 2.5) * 1000);
+    document.body.addEventListener("click", close);
+  });
+</script>
+</body></html>

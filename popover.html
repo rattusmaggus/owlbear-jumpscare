@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Jumpscare players</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:12px;color:#ddd;font-size:14px}
+  label{display:flex;align-items:center;gap:8px;margin:6px 0}
+  .dot{width:10px;height:10px;border-radius:50%} button{cursor:pointer;margin-top:10px}
+  small{opacity:.7;display:block;margin-top:8px}
+</style></head>
+<body>
+  <b>Who can get jumpscared?</b>
+  <div id="list"></div>
+  <button id="test">Test default scare (me)</button>
+  <small>Per-creature range, image and sound: right-click a character token → "Jumpscare Settings".</small>
+<script type="module">
+  import { OBR, ROOM_KEY, DEFAULT_CFG, showScare } from "./shared.js";
+  OBR.onReady(async () => {
+    const role = await OBR.player.getRole();
+    let disabled = (await OBR.room.getMetadata())[ROOM_KEY]?.disabled ?? {};
+
+    async function render(players) {
+      const list = document.getElementById("list");
+      list.innerHTML = "";
+      const ps = players.filter((p) => p.role !== "GM");
+      if (!ps.length) list.textContent = "No players connected.";
+      for (const p of ps) {
+        const l = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = !disabled[p.id]; cb.disabled = role !== "GM";
+        cb.onchange = async () => {
+          const next = { ...disabled };
+          if (cb.checked) delete next[p.id]; else next[p.id] = true;
+          disabled = next;
+          const md = (await OBR.room.getMetadata())[ROOM_KEY] ?? {};
+          await OBR.room.setMetadata({ [ROOM_KEY]: { ...md, disabled: next } });
+        };
+        const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = p.color;
+        l.append(cb, dot, document.createTextNode(p.name || "Player"));
+        list.append(l);
+      }
+    }
+    render(await OBR.party.getPlayers());
+    OBR.party.onChange(render);
+    document.getElementById("test").onclick = () => showScare({ ...DEFAULT_CFG });
+  });
+</script>
+</body></html>
