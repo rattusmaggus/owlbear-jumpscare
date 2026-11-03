@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Token settings</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:14px;color:#ddd;font-size:14px;color-scheme:dark}
+  label{display:block;margin:10px 0 3px} input,select{width:100%;box-sizing:border-box;padding:4px}
+  button{cursor:pointer;margin:14px 6px 0 0;padding:6px 14px}
+  small{opacity:.65;display:block;margin-top:10px;line-height:1.4} #err{color:#f88}
+</style></head>
+<body>
+  <b id="title">Token</b>
+  <label>Range (grid cells)</label><input id="range" type="number" min="0" step="0.5">
+  <label>Shape</label>
+  <select id="shape"><option value="circle">Circle (around the token)</option><option value="cone">Cone (90°, in front)</option></select>
+  <small>0 = no range. The range reveals fog and is what this creature can see. The cone faces the top of the token, so rotate the token to aim it, and it always shows 1 cell around the token too.</small>
+  <div id="err"></div>
+  <button id="save">Save</button><button id="close">Close</button>
+<script type="module">
+  import { OBR, CFG_KEY, RANGE_MODAL, getCfg } from "./shared.js";
+  const $ = (id) => document.getElementById(id);
+  const itemId = new URLSearchParams(location.search).get("id");
+  OBR.onReady(async () => {
+    const [item] = await OBR.scene.items.getItems([itemId]);
+    const c = getCfg(item);
+    $("title").textContent = item.name || "Token";
+    $("range").value = c.range; $("shape").value = c.shape;
+    $("close").onclick = () => OBR.modal.close(RANGE_MODAL);
+    $("save").onclick = async () => {
+      try {
+        await OBR.scene.items.updateItems([itemId], (its) => {
+          its[0].metadata[CFG_KEY] = { ...getCfg(its[0]), range: Math.max(0, Number($("range").value) || 0), shape: $("shape").value };
+        });
+        OBR.modal.close(RANGE_MODAL);
+      } catch (e) { $("err").textContent = "Couldn't save: " + (e.message || e) + " (the GM may need to allow players to edit this token)"; }
+    };
+  });
+</script></body></html>

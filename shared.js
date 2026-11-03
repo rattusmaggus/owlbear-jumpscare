@@ -3,41 +3,54 @@ export { OBR };
 
 export const NS = "com.example.jumpscare";          // only place to change the namespace
 export const CFG_KEY = `${NS}/config`;              // per-token settings
-export const ROOM_KEY = `${NS}/settings`;           // room settings (which players are disabled)
+export const ROOM_KEY = `${NS}/settings`;           // room settings { mode, disabled }
 export const SCARE_MODAL = `${NS}/scare`;
 export const SETTINGS_MODAL = `${NS}/settings-modal`;
+export const RANGE_MODAL = `${NS}/range-modal`;
 export const ENABLE_MODAL = `${NS}/enable-sound`;
 export const AUDIO_CHANNEL = `${NS}-audio`;
+export const SCARE_MSG = `${NS}/scare-msg`;         // broadcast used by Party mode
+
+export const CONE_ANGLE = 90;                       // cones are always 90 degrees
 
 export const DEFAULT_CFG = {
   jumpscare: false,   // is this a jumpscare creature?
-  range: 0,           // in grid cells, 0 = no range
+  range: 0,           // grid cells, 0 = none
   shape: "circle",    // "circle" | "cone"
-  angle: 90,          // cone width in degrees
-  owner: "",          // player id that controls this creature ("" = whoever created the token)
-  image: "",          // png/jpg/gif/webp URL (or path relative to this extension)
-  sound: "",          // mp3/ogg/wav URL (or path relative to this extension)
-  duration: 2.5,      // seconds
+  owner: "",          // player id controlling it ("" = whoever created the token)
+  image: "",          // png/jpg/gif/webp URL or path in the repo
+  sound: "",          // mp3/ogg/wav URL or path in the repo
+  duration: 2.5,      // seconds of scare
+  volume: 200,        // % (above 100 = boost)
+  boom: true,         // built-in impact boom + screech
+  buildup: 0.6,       // seconds of dark heartbeat build-up before the scare
 };
 
 export const getCfg = (item) => ({ ...DEFAULT_CFG, ...(item.metadata?.[CFG_KEY] || {}) });
 export const base = (file) => new URL(file, import.meta.url).href;
 export const isMine = (item, cfg, me) => (cfg.owner ? cfg.owner === me : item.createdUserId === me);
-
 export const soundUrlOf = (cfg) => new URL(cfg.sound || "scare.mp3", base("x")).href;
 
-// Starts the sound immediately (played by the always-open background page, which keeps files preloaded),
-// then opens the visual. The scare window only plays sound itself if the background reports it was blocked.
-export async function showScare(cfg) {
-  try {
-    const ch = new BroadcastChannel(AUDIO_CHANNEL);
-    ch.postMessage({ type: "play", url: soundUrlOf(cfg) });
-    ch.close();
-  } catch {}
+export const roomSettings = (md) => ({
+  mode: md?.[ROOM_KEY]?.mode === "party" ? "party" : "individual",
+  disabled: md?.[ROOM_KEY]?.disabled ?? {},
+});
+export async function saveRoomSettings(patch) {
+  const md = await OBR.room.getMetadata();
+  await OBR.room.setMetadata({ [ROOM_KEY]: { ...(md[ROOM_KEY] ?? {}), ...patch } });
+}
+
+// Opens the scare on THIS client. { back: true } reopens the settings window afterwards (for test buttons).
+export async function showScare(cfg, opts = {}) {
+  const c = { ...DEFAULT_CFG, ...cfg };
   const p = new URLSearchParams({
-    img: cfg.image || "",
-    snd: cfg.sound || "",
-    dur: String(cfg.duration || 2.5),
+    img: c.image || "",
+    snd: soundUrlOf(c),
+    dur: String(c.duration),
+    vol: String(c.volume),
+    boom: c.boom ? "1" : "0",
+    build: String(c.buildup),
+    back: opts.back ? "1" : "0",
     t: String(Date.now()),
   });
   await OBR.modal.open({
@@ -50,14 +63,16 @@ export async function showScare(cfg) {
 }
 
 /* ---------- geometry ---------- */
-export function inArea(origin, facingDeg, cfg, target, dpi) {
+// `bubble`: a cone also "sees" a 1-cell circle around its token (matches the fog reveal)
+export function inArea(origin, facingDeg, cfg, target, dpi, bubble = false) {
   const dx = target.x - origin.x, dy = target.y - origin.y;
   const dist = Math.hypot(dx, dy);
+  if (bubble && cfg.shape === "cone" && dist <= dpi) return true;
   if (dist > cfg.range * dpi) return false;
   if (cfg.shape !== "cone" || dist < 1) return true;
   const r = (facingDeg * Math.PI) / 180;
   const dot = (dx * Math.sin(r) + dy * -Math.cos(r)) / dist;
-  return Math.acos(Math.max(-1, Math.min(1, dot))) <= ((cfg.angle / 2) * Math.PI) / 180;
+  return Math.acos(Math.max(-1, Math.min(1, dot))) <= ((CONE_ANGLE / 2) * Math.PI) / 180;
 }
 
 export async function centerOf(item) {
@@ -65,7 +80,6 @@ export async function centerOf(item) {
   catch { return item.position; }
 }
 
-// Shared by the background trigger logic AND the Diagnose button.
 export async function analyze(items, me) {
   const dpi = await OBR.scene.grid.getDpi();
   const chars = items.filter((i) => i.layer === "CHARACTER").map((i) => ({ item: i, cfg: getCfg(i) }));
@@ -77,11 +91,9 @@ export async function analyze(items, me) {
   const otherLayer = items.filter((i) => i.layer !== "CHARACTER" && i.metadata?.[CFG_KEY]).length;
 
   const results = scary.map((s) => {
-    // Rule 3: my creature entered the scary creature's range
     const entered = s.cfg.range > 0 &&
       mine.some((m) => inArea(s.center, s.item.rotation, s.cfg, m.center, dpi));
-    // Rule 2: the scary creature is inside my creature's sight area
-    const seen = mine.some((m) => m.cfg.range > 0 && inArea(m.center, m.item.rotation, m.cfg, s.center, dpi));
+    const seen = mine.some((m) => m.cfg.range > 0 && inArea(m.center, m.item.rotation, m.cfg, s.center, dpi, true));
     const nearest = mine.length
       ? Math.min(...mine.map((m) => Math.hypot(m.center.x - s.center.x, m.center.y - s.center.y) / dpi))
       : null;

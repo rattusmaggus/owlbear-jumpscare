@@ -1,36 +1,109 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
 <style>
-  html,body{margin:0;height:100%;background:#000;overflow:hidden}
-  #flash{position:fixed;inset:0;background:#f00;pointer-events:none;animation:flash .15s 6 alternate}
-  #pic,#fallback{position:fixed;inset:0;margin:auto;max-width:100%;max-height:100%;animation:shake .08s infinite,zoom 2.5s ease-out forwards}
-  #fallback{display:none;font-size:60vmin;text-align:center;line-height:100vh}
-  @keyframes flash{from{opacity:1}to{opacity:0}}
-  @keyframes shake{0%{transform:translate(0,0)}25%{transform:translate(-12px,8px)}50%{transform:translate(10px,-10px)}75%{transform:translate(-8px,-6px)}100%{transform:translate(8px,10px)}}
-  @keyframes zoom{from{scale:.6}to{scale:1.4}}
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+  #stage{position:fixed;inset:0;overflow:hidden;background:#000}
+  #shake,#zoom{position:absolute;inset:0}
+  .pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
+  #r{mix-blend-mode:screen;filter:sepia(1) saturate(10) hue-rotate(-40deg)}
+  #c{mix-blend-mode:screen;filter:sepia(1) saturate(10) hue-rotate(150deg)}
+  #fallback{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:80vmin}
+  #vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 30%,rgba(0,0,0,.96) 100%)}
+  .go #vig{background:radial-gradient(ellipse at center,transparent 25%,rgba(120,0,0,.85) 100%)}
+  #scan{position:absolute;inset:0;pointer-events:none;opacity:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.3) 0 2px,transparent 2px 4px)}
+  #noise{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;pointer-events:none;opacity:0;mix-blend-mode:overlay}
+  #flash{position:absolute;inset:0;opacity:0;pointer-events:none}
 </style></head>
 <body>
-  <img id="pic" alt="">
-  <div id="fallback">👁️</div>
-  <div id="flash"></div>
+<div id="stage">
+  <div id="shake"><div id="zoom">
+    <img id="m" class="pic" alt=""><img id="r" class="pic" alt=""><img id="c" class="pic" alt="">
+    <div id="fallback">👁️</div>
+  </div></div>
+  <div id="vig"></div><div id="scan"></div><canvas id="noise" width="128" height="72"></canvas><div id="flash"></div>
+</div>
 <script type="module">
-  import { OBR, SCARE_MODAL, AUDIO_CHANNEL } from "./shared.js";
+  import { OBR, SCARE_MODAL, SETTINGS_MODAL, AUDIO_CHANNEL, base } from "./shared.js";
+  const $ = (id) => document.getElementById(id);
   const q = new URLSearchParams(location.search);
-  const resolve = (v, dflt) => new URL(v || dflt, location.href).href;
-
-  const pic = document.getElementById("pic");
-  pic.onerror = () => { pic.style.display = "none"; document.getElementById("fallback").style.display = "block"; };
-  pic.src = resolve(q.get("img"), "scare.jpg");
-
-  // Sound is started by the background page. If the browser blocked it there, try here.
-  const soundUrl = resolve(q.get("snd"), "scare.mp3");
+  const build = Math.max(0, Number(q.get("build")) || 0);
+  const dur = Math.max(0.5, Number(q.get("dur")) || 2.5);
+  const total = build + dur;
+  const soundUrl = q.get("snd");
   const ch = new BroadcastChannel(AUDIO_CHANNEL);
-  ch.onmessage = (e) => { if (e.data?.type === "blocked") new Audio(soundUrl).play().catch(() => {}); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  OBR.onReady(() => {
-    const close = () => OBR.modal.close(SCARE_MODAL);
-    setTimeout(close, (Number(q.get("dur")) || 2.5) * 1000);
+  // if the background page was blocked by the browser, try playing here
+  ch.onmessage = (e) => { if (e.data?.type === "blocked") setTimeout(() => new Audio(soundUrl).play().catch(() => {}), build * 1000); };
+
+  const pics = [$("m"), $("r"), $("c")];
+  const imgUrl = new URL(q.get("img") || "scare.jpg", location.href).href;
+  let imgOk = true;
+  $("m").onerror = () => { imgOk = false; pics.forEach((p) => (p.style.display = "none")); $("fallback").style.display = "flex"; };
+  pics.forEach((p) => (p.src = imgUrl));
+
+  async function close() {
+    if (q.get("back") === "1") { try { await OBR.modal.open({ id: SETTINGS_MODAL, url: base("settings.html"), width: 700, height: 740 }); } catch {} }
+    OBR.modal.close(SCARE_MODAL);
+  }
+
+  function reveal() {
+    const t0 = performance.now(), dMs = dur * 1000;
+    $("stage").classList.add("go");
+    navigator.vibrate?.([150, 40, 250]);
+
+    $("m").style.filter = "none"; $("m").style.opacity = 1;
+    $("r").style.opacity = 0.55; $("c").style.opacity = 0.55;
+    $("zoom").animate(
+      [{ transform: "scale(.3)" }, { transform: "scale(1.25)", offset: 0.07 }, { transform: "scale(1.75)" }],
+      { duration: dMs, easing: "linear", fill: "forwards" });
+    $("fallback").style.opacity = 1;
+
+    $("scan").style.opacity = 0.6; $("noise").style.opacity = 0.35;
+    const nctx = $("noise").getContext("2d"); const id = nctx.createImageData(128, 72);
+    setInterval(() => { for (let i = 0; i < id.data.length; i += 4) { const v = Math.random() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255; } nctx.putImageData(id, 0, 0); }, 60);
+
+    // strobe
+    const cols = ["#fff", "#f00", "#000", "#f00"]; let k = 0;
+    const iv = setInterval(() => {
+      if (performance.now() - t0 > 700) { $("flash").style.opacity = 0; clearInterval(iv); return; }
+      $("flash").style.background = cols[k % 4]; $("flash").style.opacity = k % 2 ? 0 : 0.85; k++;
+    }, 70);
+
+    // shake + RGB glitch
+    (function tick(now) {
+      const e = (performance.now() - t0) / dMs; if (e >= 1) return;
+      const amp = 40 * (1 - e * 0.6);
+      $("shake").style.translate = `${(Math.random() - 0.5) * amp}px ${(Math.random() - 0.5) * amp}px`;
+      const g = Math.random() < 0.4 ? 10 + Math.random() * 30 : 6;
+      $("r").style.translate = `${-g}px 0`; $("c").style.translate = `${g}px 0`;
+      requestAnimationFrame(tick);
+    })();
+  }
+
+  async function start() {
+    try { await Promise.race([$("m").decode(), sleep(1500)]); } catch {}
+    // sound + heartbeat + boom are played by the background page, in sync with this timeline
+    ch.postMessage({
+      type: "play", url: soundUrl, delay: build,
+      volume: Number(q.get("vol")) || 100, boom: q.get("boom") === "1",
+    });
+
+    // build-up: almost-black, a barely visible face slowly creeping closer
+    if (build > 0 && imgOk) {
+      $("zoom").style.transform = "scale(.55)";
+      $("m").style.filter = "blur(8px) brightness(.6)"; $("m").style.opacity = 0.05;
+      $("zoom").animate([{ transform: "scale(.55)" }, { transform: "scale(.75)" }], { duration: build * 1000, fill: "forwards" });
+      const fl = setInterval(() => ($("m").style.opacity = 0.02 + Math.random() * 0.09), 90);
+      setTimeout(() => clearInterval(fl), build * 1000);
+    }
+    $("vig").animate([{ opacity: 0.8 }, { opacity: 1 }, { opacity: 0.8 }], { duration: 750, iterations: Math.max(1, Math.ceil(build / 0.75)) });
+    setTimeout(reveal, build * 1000);
+
+    $("stage").animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: total * 1000 - 300, fill: "forwards" });
+    setTimeout(close, total * 1000);
     document.body.addEventListener("click", close);
-  });
+  }
+  OBR.onReady(start);
 </script>
 </body></html>

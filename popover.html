@@ -1,73 +1,56 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Jumpscare</title>
 <style>
-  body{font-family:system-ui,sans-serif;margin:12px;color:#ddd;font-size:14px}
-  label{display:flex;align-items:center;gap:8px;margin:6px 0}
-  .dot{width:10px;height:10px;border-radius:50%} button{cursor:pointer;margin:10px 6px 0 0}
+  body{font-family:system-ui,sans-serif;margin:12px;color:#ddd;font-size:14px;color-scheme:dark}
+  button{cursor:pointer;margin:6px 6px 0 0;padding:6px 10px}
+  pre{white-space:pre-wrap;font-size:12px;background:#0003;padding:8px;border-radius:4px;max-height:260px;overflow:auto}
   small{opacity:.7;display:block;margin-top:8px}
-  pre{white-space:pre-wrap;font-size:12px;background:#0003;padding:8px;border-radius:4px;max-height:170px;overflow:auto}
 </style></head>
 <body>
-  <b>Who can get jumpscared?</b>
-  <div id="list"></div>
-  <button id="test">Test default scare</button><button id="diag">Diagnose</button>
+  <div id="gm" style="display:none">
+    <button id="open">⚙ Open settings</button>
+    <button id="test">▶ Test default scare</button>
+  </div>
+  <button id="diag">🔍 Diagnose</button>
   <pre id="out" style="display:none"></pre>
-  <small>Per-creature settings: right-click a character token → "Jumpscare Settings".</small>
+  <small id="hint"></small>
 <script type="module">
-  import { OBR, ROOM_KEY, DEFAULT_CFG, showScare, analyze } from "./shared.js";
+  import { OBR, SETTINGS_MODAL, DEFAULT_CFG, base, showScare, analyze, roomSettings } from "./shared.js";
   OBR.onReady(async () => {
     const role = await OBR.player.getRole();
-    let disabled = (await OBR.room.getMetadata())[ROOM_KEY]?.disabled ?? {};
-
-    async function render(players) {
-      const list = document.getElementById("list");
-      list.innerHTML = "";
-      const ps = players.filter((p) => p.role !== "GM");
-      if (!ps.length) list.textContent = "No players connected.";
-      for (const p of ps) {
-        const l = document.createElement("label");
-        const cb = document.createElement("input");
-        cb.type = "checkbox"; cb.checked = !disabled[p.id]; cb.disabled = role !== "GM";
-        cb.onchange = async () => {
-          const next = { ...disabled };
-          if (cb.checked) delete next[p.id]; else next[p.id] = true;
-          disabled = next;
-          const md = (await OBR.room.getMetadata())[ROOM_KEY] ?? {};
-          await OBR.room.setMetadata({ [ROOM_KEY]: { ...md, disabled: next } });
-        };
-        const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = p.color;
-        l.append(cb, dot, document.createTextNode(p.name || "Player"));
-        list.append(l);
-      }
+    if (role === "GM") {
+      document.getElementById("gm").style.display = "block";
+      document.getElementById("hint").textContent = "Right-click a token → Token Settings for range and shape.";
+      document.getElementById("open").onclick = () =>
+        OBR.modal.open({ id: SETTINGS_MODAL, url: base("settings.html"), width: 700, height: 740 });
+      document.getElementById("test").onclick = () => showScare({ ...DEFAULT_CFG });
+    } else {
+      document.getElementById("hint").textContent = "Right-click your token → Token Settings to set its range and shape.";
     }
-    render(await OBR.party.getPlayers());
-    OBR.party.onChange(render);
-
-    document.getElementById("test").onclick = () => showScare({ ...DEFAULT_CFG });
 
     document.getElementById("diag").onclick = async () => {
       const out = document.getElementById("out");
       out.style.display = "block";
       try {
-        const md = (await OBR.room.getMetadata())[ROOM_KEY]?.disabled ?? {};
+        const room = roomSettings(await OBR.room.getMetadata());
         const items = await OBR.scene.items.getItems();
         const a = await analyze(items, OBR.player.id);
         const L = [];
         L.push(`Your role: ${role}` + (role === "GM" ? "  ← the GM never gets scared. Run this as a PLAYER." : ""));
-        L.push(`Enabled for you: ${md[OBR.player.id] ? "NO (GM turned you off)" : "yes"}`);
+        L.push(`Mode: ${room.mode}`);
+        L.push(`Enabled for you: ${room.disabled[OBR.player.id] ? "NO (GM turned you off)" : "yes"}`);
         L.push(`Your creatures: ${a.mine.length}` + (a.mine.length ? ` (${a.mine.map((m) => `${m.item.name || "token"} range ${m.cfg.range}`).join(", ")})` : ""));
-        if (!a.mine.length) L.push("  ⚠ No creature is assigned to you. GM: Jumpscare Settings → 'Who controls this creature?'");
+        if (!a.mine.length) L.push("  ⚠ No creature is assigned to you. GM: set the owner in the settings token list.");
         L.push(`Jumpscare creatures: ${a.scary.length}`);
         if (a.otherLayer) L.push(`  ⚠ ${a.otherLayer} configured token(s) aren't on the Character layer and are ignored.`);
         for (const r of a.results) {
           L.push(`• ${r.s.item.name || "token"}: range ${r.s.cfg.range} (${r.s.cfg.shape})` +
             (r.nearest == null ? "" : `, nearest of your creatures ${r.nearest.toFixed(1)} cells away`));
           L.push(`    you entered its range: ${r.entered ? "YES" : "no"} | it's in your sight: ${r.seen ? "YES" : "no"}`);
-          if (r.s.cfg.range <= 0) L.push("    ⚠ its range is 0, so entering never triggers. Set a range.");
+          if (r.s.cfg.range <= 0) L.push("    ⚠ its range is 0, so entering never triggers.");
         }
         out.textContent = L.join("\n");
       } catch (e) { out.textContent = "Error: " + e.message; }
     };
   });
-</script>
-</body></html>
+</script></body></html>

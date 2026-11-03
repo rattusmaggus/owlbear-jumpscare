@@ -1,0 +1,170 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Jumpscare settings</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{font-family:system-ui,sans-serif;margin:0;padding:12px;color:#ddd;font-size:12px;color-scheme:dark;display:flex;flex-direction:column;gap:8px}
+  h4{margin:4px 0 2px;font-size:13px} .muted{opacity:.65}
+  input,select,button{font-size:12px;padding:3px 4px} input[type=number]{width:52px}
+  button{cursor:pointer}
+  #mode{display:flex} #mode button{flex:1;padding:6px;border:1px solid #666;background:#0002;color:inherit}
+  #mode button:first-child{border-radius:6px 0 0 6px} #mode button:last-child{border-radius:0 6px 6px 0}
+  #mode button.on{background:#7c5cff;border-color:#7c5cff;color:#fff}
+  #players{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px;max-height:78px;overflow:auto;border:1px solid #5556;border-radius:6px;padding:4px 6px}
+  #players label{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  #tokens{flex:1;min-height:120px;overflow:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px}
+  .tok{border:1px solid #5558;border-radius:6px;padding:6px;background:#0002}
+  .l1,.l2{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .l2{margin-top:6px;padding-top:6px;border-top:1px dashed #5558}
+  .name{flex:1 1 120px;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hide{display:none} .l2 .image,.l2 .sound{flex:1 1 150px;min-width:120px}
+  .x{border:none;background:none;color:#f88;font-size:14px}
+</style></head>
+<body>
+  <div><h4>Mode</h4>
+    <div id="mode"><button data-m="individual">👤 Individual</button><button data-m="party">👥 Party</button></div>
+    <div class="muted" id="modeHint" style="margin-top:3px"></div></div>
+
+  <div><h4>Players that can get jumpscared</h4><div id="players"></div></div>
+
+  <div class="bar"><h4>Tokens</h4>
+    <select id="add"><option value="">+ Add token…</option></select></div>
+  <div id="tokens"></div>
+
+<script type="module">
+  import { OBR, CFG_KEY, DEFAULT_CFG, getCfg, roomSettings, saveRoomSettings, showScare } from "./shared.js";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const HINT = {
+    individual: "Only the player whose creature triggers it gets the scare.",
+    party: "Every enabled player gets the scare when anyone triggers it.",
+  };
+  let players = [], items = [], room = roomSettings({});
+
+  /* ----- mode + players ----- */
+  function renderMode() {
+    document.querySelectorAll("#mode button").forEach((b) => b.classList.toggle("on", b.dataset.m === room.mode));
+    $("modeHint").textContent = HINT[room.mode];
+  }
+  function renderPlayers() {
+    const box = $("players");
+    box.innerHTML = players.length ? "" : `<span class="muted">No players connected.</span>`;
+    for (const p of players) {
+      const l = document.createElement("label");
+      l.innerHTML = `<input type="checkbox" ${room.disabled[p.id] ? "" : "checked"}><span class="dot" style="background:${esc(p.color)}"></span><span>${esc(p.name || "Player")}</span>`;
+      l.querySelector("input").onchange = async (e) => {
+        const next = { ...room.disabled };
+        if (e.target.checked) delete next[p.id]; else next[p.id] = true;
+        room.disabled = next;
+        await saveRoomSettings({ disabled: next });
+      };
+      box.append(l);
+    }
+  }
+  document.querySelectorAll("#mode button").forEach((b) => (b.onclick = async () => {
+    room.mode = b.dataset.m; renderMode(); await saveRoomSettings({ mode: room.mode });
+  }));
+
+  /* ----- tokens ----- */
+  const configured = () => items.filter((i) => i.layer === "CHARACTER" && i.metadata?.[CFG_KEY]);
+
+  function rowHtml(it) {
+    const c = getCfg(it);
+    const owners = `<option value="">Creator</option>` +
+      players.map((p) => `<option value="${esc(p.id)}" ${c.owner === p.id ? "selected" : ""}>${esc(p.name || "Player")}</option>`).join("") +
+      (c.owner && !players.some((p) => p.id === c.owner) ? `<option value="${esc(c.owner)}" selected>(offline player)</option>` : "");
+    return `
+      <div class="l1">
+        <b class="name" title="${esc(it.name)}">${esc(it.name || "Unnamed token")}</b>
+        <select class="owner" title="Who controls it">${owners}</select>
+        <input class="range" type="number" min="0" step="0.5" value="${c.range}" title="Range (cells)">
+        <select class="shape" title="Shape"><option value="circle" ${c.shape === "circle" ? "selected" : ""}>Circle</option><option value="cone" ${c.shape === "cone" ? "selected" : ""}>Cone 90°</option></select>
+        <label><input class="js" type="checkbox" ${c.jumpscare ? "checked" : ""}> Jumpscare</label>
+        <button class="x" title="Remove from list">✕</button>
+      </div>
+      <div class="l2 ${c.jumpscare ? "" : "hide"}">
+        <input class="image" type="text" placeholder="Image / GIF (scare.jpg)" value="${esc(c.image)}">
+        <input class="sound" type="text" placeholder="Sound (scare.mp3)" value="${esc(c.sound)}">
+        <label title="Seconds of scare">⏱ <input class="dur" type="number" min="0.5" step="0.5" value="${c.duration}"></label>
+        <label title="Volume %, above 100 = boost">🔊 <input class="vol" type="number" min="50" max="400" step="10" value="${c.volume}">%</label>
+        <label title="Seconds of dark heartbeat before the scare">🫀 <input class="build" type="number" min="0" max="5" step="0.1" value="${c.buildup}">s</label>
+        <label title="Built-in impact boom + screech"><input class="boom" type="checkbox" ${c.boom ? "checked" : ""}> Boom</label>
+        <button class="test">▶ Test</button>
+      </div>`;
+  }
+
+  function readRow(row, item) {
+    const g = (s) => row.querySelector(s);
+    return {
+      ...getCfg(item),
+      owner: g(".owner").value,
+      range: Math.max(0, Number(g(".range").value) || 0),
+      shape: g(".shape").value,
+      jumpscare: g(".js").checked,
+      image: g(".image").value.trim(),
+      sound: g(".sound").value.trim(),
+      duration: Number(g(".dur").value) || DEFAULT_CFG.duration,
+      volume: Number(g(".vol").value) || DEFAULT_CFG.volume,
+      buildup: Math.max(0, Number(g(".build").value) || 0),
+      boom: g(".boom").checked,
+    };
+  }
+
+  function renderTokens() {
+    const box = $("tokens");
+    box.innerHTML = "";
+    const list = configured();
+    if (!list.length) box.innerHTML = `<span class="muted">No tokens yet. Use "+ Add token…" above, or right-click a token → Token Settings.</span>`;
+    for (const it of list) {
+      const row = document.createElement("div");
+      row.className = "tok"; row.dataset.id = it.id;
+      row.innerHTML = rowHtml(it);
+      box.append(row);
+
+      const commit = async () => {
+        const cur = items.find((i) => i.id === it.id) ?? it;
+        const cfg = readRow(row, cur);
+        await OBR.scene.items.updateItems([it.id], (its) => { its[0].metadata[CFG_KEY] = cfg; });
+      };
+      row.addEventListener("change", async (e) => {
+        if (e.target.classList.contains("js")) {
+          row.querySelector(".l2").classList.toggle("hide", !e.target.checked);
+          if (e.target.checked && !Number(row.querySelector(".range").value)) row.querySelector(".range").value = 2;
+        }
+        await commit();
+      });
+      row.querySelector(".test").onclick = () => showScare(readRow(row, items.find((i) => i.id === it.id) ?? it), { back: true });
+      row.querySelector(".x").onclick = async () => {
+        await OBR.scene.items.updateItems([it.id], (its) => { delete its[0].metadata[CFG_KEY]; });
+      };
+    }
+    // "+ Add token" options
+    const unconf = items.filter((i) => i.layer === "CHARACTER" && !i.metadata?.[CFG_KEY]);
+    $("add").innerHTML = `<option value="">+ Add token…</option>` +
+      unconf.map((i) => `<option value="${esc(i.id)}">${esc(i.name || "Unnamed token")}</option>`).join("");
+  }
+  $("add").onchange = async (e) => {
+    const id = e.target.value; if (!id) return;
+    await OBR.scene.items.updateItems([id], (its) => { its[0].metadata[CFG_KEY] = { ...DEFAULT_CFG }; });
+  };
+
+  /* ----- boot ----- */
+  OBR.onReady(async () => {
+    room = roomSettings(await OBR.room.getMetadata());
+    players = (await OBR.party.getPlayers()).filter((p) => p.role !== "GM");
+    items = await OBR.scene.items.getItems();
+    renderMode(); renderPlayers(); renderTokens();
+
+    OBR.party.onChange(async (ps) => { players = ps.filter((p) => p.role !== "GM"); renderPlayers(); });
+    OBR.scene.items.onChange((its) => {
+      items = its;
+      if (!document.activeElement?.closest?.("#tokens")) renderTokens();   // don't wipe a field being typed in
+      else {
+        const ids = configured().map((i) => i.id).join(), shown = [...document.querySelectorAll(".tok")].map((r) => r.dataset.id).join();
+        if (ids !== shown) renderTokens();
+      }
+    });
+  });
+</script></body></html>
