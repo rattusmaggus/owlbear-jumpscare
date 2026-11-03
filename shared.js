@@ -24,7 +24,16 @@ export const getCfg = (item) => ({ ...DEFAULT_CFG, ...(item.metadata?.[CFG_KEY] 
 export const base = (file) => new URL(file, import.meta.url).href;
 export const isMine = (item, cfg, me) => (cfg.owner ? cfg.owner === me : item.createdUserId === me);
 
+export const soundUrlOf = (cfg) => new URL(cfg.sound || "scare.mp3", base("x")).href;
+
+// Starts the sound immediately (played by the always-open background page, which keeps files preloaded),
+// then opens the visual. The scare window only plays sound itself if the background reports it was blocked.
 export async function showScare(cfg) {
+  try {
+    const ch = new BroadcastChannel(AUDIO_CHANNEL);
+    ch.postMessage({ type: "play", url: soundUrlOf(cfg) });
+    ch.close();
+  } catch {}
   const p = new URLSearchParams({
     img: cfg.image || "",
     snd: cfg.sound || "",

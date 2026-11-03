@@ -22,11 +22,10 @@
   pic.onerror = () => { pic.style.display = "none"; document.getElementById("fallback").style.display = "block"; };
   pic.src = resolve(q.get("img"), "scare.jpg");
 
-  // Sound: try here; if the browser blocks it, ask the background page (which got the "Enable sound" click)
+  // Sound is started by the background page. If the browser blocked it there, try here.
   const soundUrl = resolve(q.get("snd"), "scare.mp3");
-  const snd = new Audio(soundUrl);
-  const viaBackground = () => new BroadcastChannel(AUDIO_CHANNEL).postMessage({ type: "play", url: soundUrl });
-  snd.play().catch(viaBackground);
+  const ch = new BroadcastChannel(AUDIO_CHANNEL);
+  ch.onmessage = (e) => { if (e.data?.type === "blocked") new Audio(soundUrl).play().catch(() => {}); };
 
   OBR.onReady(() => {
     const close = () => OBR.modal.close(SCARE_MODAL);

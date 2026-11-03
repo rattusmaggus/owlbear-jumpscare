@@ -1,7 +1,7 @@
 import OBR, { buildLight } from "https://esm.sh/@owlbear-rodeo/sdk@3";
 import {
   NS, ROOM_KEY, SETTINGS_MODAL, ENABLE_MODAL, AUDIO_CHANNEL,
-  getCfg, base, showScare, analyze,
+  getCfg, base, showScare, soundUrlOf, analyze,
 } from "./shared.js";
 
 const LIGHT_TAG = `${NS}/light`;
@@ -13,17 +13,42 @@ let scaring = false;
 const fired = new Set();
 const lightFor = new Map();
 
-/* ---------- sound fallback: the scare window asks us to play if the browser blocks it there ---------- */
+/* ---------- sound: preloaded + reused so it starts instantly every time ---------- */
 const channel = new BroadcastChannel(AUDIO_CHANNEL);
-let audio;
-channel.onmessage = (e) => {
-  if (e.data?.type !== "play") return;
+const sounds = new Map();   // url -> HTMLAudioElement
+let current = null;
+
+function getSound(url) {
+  let a = sounds.get(url);
+  if (!a) {
+    a = new Audio();
+    a.preload = "auto";
+    a.src = url;
+    a.load();
+    sounds.set(url, a);
+  }
+  return a;
+}
+function playSound(url) {
   try {
-    audio?.pause();
-    audio = new Audio(e.data.url);
-    audio.play().catch((err) => console.warn("[jumpscare] sound blocked:", err?.message));
+    if (current && current !== getSound(url)) current.pause();
+    const a = getSound(url);
+    current = a;
+    a.currentTime = 0;
+    a.play().catch((err) => {
+      console.warn("[jumpscare] sound blocked:", err?.message);
+      channel.postMessage({ type: "blocked", url });   // let the scare window try
+    });
   } catch (err) { console.warn("[jumpscare]", err); }
-};
+}
+channel.onmessage = (e) => { if (e.data?.type === "play") playSound(e.data.url); };
+
+function preloadSounds() {
+  for (const it of items) {
+    const c = getCfg(it);
+    if (c.jumpscare) getSound(soundUrlOf(c));
+  }
+}
 
 /* ---------- trigger detection (each player's own client) ---------- */
 let running = false, again = false;
@@ -121,15 +146,13 @@ OBR.onReady(async () => {
   OBR.room.onMetadataChange((md) => { applyRoom(md); check(); });
 
   // Players: one click per session so the browser lets us play sound later
-  if ((await OBR.player.getRole()) !== "GM") {
-    OBR.modal.open({ id: ENABLE_MODAL, url: base("enable.html"), width: 320, height: 150 }).catch(() => {});
-  }
+  OBR.modal.open({ id: ENABLE_MODAL, url: base("enable.html"), width: 320, height: 150 }).catch(() => {});
 
   const start = async () => {
     const old = await OBR.scene.local.getItems((i) => i.metadata?.[LIGHT_TAG]);
     if (old.length) await OBR.scene.local.deleteItems(old.map((i) => i.id));
     lightFor.clear();
-    const update = (its) => { items = its; syncLights().catch((e) => console.warn("[jumpscare] lights:", e)); check(); };
+    const update = (its) => { items = its; preloadSounds(); syncLights().catch((e) => console.warn("[jumpscare] lights:", e)); check(); };
     update(await OBR.scene.items.getItems());
     OBR.scene.items.onChange(update);
   };
