@@ -13,10 +13,8 @@
   <img id="pic" alt="">
   <div id="fallback">👁️</div>
   <div id="flash"></div>
-  <audio id="snd"></audio>
 <script type="module">
-  import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
-  const SCARE_MODAL = "com.rattusmaggus.jumpscare/scare";   // must match shared.js
+  import { OBR, SCARE_MODAL, AUDIO_CHANNEL } from "./shared.js";
   const q = new URLSearchParams(location.search);
   const resolve = (v, dflt) => new URL(v || dflt, location.href).href;
 
@@ -24,19 +22,11 @@
   pic.onerror = () => { pic.style.display = "none"; document.getElementById("fallback").style.display = "block"; };
   pic.src = resolve(q.get("img"), "scare.jpg");
 
-  const snd = document.getElementById("snd");
-  const noise = () => {                    // fallback: synthesized noise burst
-    try {
-      const ctx = new AudioContext();
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 1.2, ctx.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); s.start();
-    } catch {}
-  };
-  snd.onerror = noise;
-  snd.src = resolve(q.get("snd"), "scare.mp3");
-  snd.play().catch(noise);
+  // Sound: try here; if the browser blocks it, ask the background page (which got the "Enable sound" click)
+  const soundUrl = resolve(q.get("snd"), "scare.mp3");
+  const snd = new Audio(soundUrl);
+  const viaBackground = () => new BroadcastChannel(AUDIO_CHANNEL).postMessage({ type: "play", url: soundUrl });
+  snd.play().catch(viaBackground);
 
   OBR.onReady(() => {
     const close = () => OBR.modal.close(SCARE_MODAL);

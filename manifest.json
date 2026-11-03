@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "manifest_version": 1,
   "description": "Mark creatures with Jumpscare. When a player's token gets close, they get a literal jumpscare.",
-  "author": "rattusmaggus",
+  "author": "YOUR-NAME",
   "icon": "https://rattusmaggus.github.io/owlbear-jumpscare/icon.svg",
   "background_url": "https://rattusmaggus.github.io/owlbear-jumpscare/background.html",
   "action": {
@@ -11,6 +11,6 @@
     "icon": "https://rattusmaggus.github.io/owlbear-jumpscare/icon.svg",
     "popover": "https://rattusmaggus.github.io/owlbear-jumpscare/popover.html",
     "width": 280,
-    "height": 340
+    "height": 480
   }
 }

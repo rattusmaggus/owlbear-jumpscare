@@ -1,37 +1,31 @@
 import OBR, { buildLight } from "https://esm.sh/@owlbear-rodeo/sdk@3";
-import { NS, ROOM_KEY, SETTINGS_MODAL, getCfg, base, showScare } from "./shared.js";
+import {
+  NS, ROOM_KEY, SETTINGS_MODAL, ENABLE_MODAL, AUDIO_CHANNEL,
+  getCfg, base, showScare, analyze,
+} from "./shared.js";
 
 const LIGHT_TAG = `${NS}/light`;
 const iconUrl = base("icon.svg");
 
 let items = [];
-let disabled = {};            // playerId -> true  (set by GM in the toolbar popover)
+let disabled = {};
 let scaring = false;
-const fired = new Set();      // jumpscare tokens already triggered while still "active"
-const lightFor = new Map();   // tokenId -> { sig, lightId }
+const fired = new Set();
+const lightFor = new Map();
 
-/* ---------- geometry ---------- */
-// Is `target` inside the circle/cone owned by `origin`? Cone faces the token's "up", rotated by token rotation.
-function inArea(origin, facingDeg, cfg, target, dpi) {
-  const dx = target.x - origin.x, dy = target.y - origin.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist > cfg.range * dpi) return false;
-  if (cfg.shape !== "cone" || dist < 1) return true;
-  const r = (facingDeg * Math.PI) / 180;
-  const dot = (dx * Math.sin(r) + dy * -Math.cos(r)) / dist;
-  return Math.acos(Math.max(-1, Math.min(1, dot))) <= ((cfg.angle / 2) * Math.PI) / 180;
-}
-
-async function centerOf(item) {
+/* ---------- sound fallback: the scare window asks us to play if the browser blocks it there ---------- */
+const channel = new BroadcastChannel(AUDIO_CHANNEL);
+let audio;
+channel.onmessage = (e) => {
+  if (e.data?.type !== "play") return;
   try {
-    const b = await OBR.scene.items.getItemBounds([item.id]);
-    return b.center;
-  } catch {
-    return item.position;
-  }
-}
+    audio?.pause();
+    audio = new Audio(e.data.url);
+    audio.play().catch((err) => console.warn("[jumpscare] sound blocked:", err?.message));
+  } catch (err) { console.warn("[jumpscare]", err); }
+};
 
-/* ---------- jumpscare detection (runs on each player's own client) ---------- */
+/* ---------- trigger detection (each player's own client) ---------- */
 let running = false, again = false;
 async function check() {
   if (running) { again = true; return; }
@@ -41,48 +35,34 @@ async function check() {
     if ((await OBR.player.getRole()) === "GM") return;
     if (disabled[OBR.player.id]) return;
 
-    const dpi = await OBR.scene.grid.getDpi();
-    const me = OBR.player.id;
+    const a = await analyze(items, OBR.player.id);
+    if (!a.mine.length || !a.scary.length) { fired.clear(); return; }
 
-    const chars = items
-      .filter((i) => i.layer === "CHARACTER")
-      .map((i) => ({ item: i, cfg: getCfg(i) }));
-
-    const mineRaw = chars.filter((c) => !c.cfg.jumpscare && c.item.createdUserId === me);
-    const scaryRaw = chars.filter((c) => c.cfg.jumpscare);
-    if (!mineRaw.length || !scaryRaw.length) { fired.clear(); return; }
-
-    const withCenter = (list) =>
-      Promise.all(list.map(async (c) => ({ ...c, center: await centerOf(c.item) })));
-    const [mine, scary] = await Promise.all([withCenter(mineRaw), withCenter(scaryRaw)]);
-
-    for (const s of scary) {
-      // Rule 3: my creature walked INTO the scary creature's range (sight doesn't matter)
-      const entered = s.cfg.range > 0 &&
-        mine.some((m) => inArea(s.center, s.item.rotation, s.cfg, m.center, dpi));
-      // Rule 2: the scary creature is inside MY creature's sight area
-      const seen = mine.some((m) =>
-        m.cfg.range > 0 && inArea(m.center, m.item.rotation, m.cfg, s.center, dpi));
-
-      if (entered || seen) {
-        if (!fired.has(s.item.id)) {
-          fired.add(s.item.id);
+    for (const r of a.results) {
+      const id = r.s.item.id;
+      if (r.entered || r.seen) {
+        if (!fired.has(id)) {
+          fired.add(id);
           scaring = true;
-          await showScare(s.cfg);
-          setTimeout(() => (scaring = false), (s.cfg.duration || 2.5) * 1000 + 800);
+          const dur = (r.s.cfg.duration || 2.5) * 1000 + 800;
+          setTimeout(() => (scaring = false), dur);
+          try { await showScare(r.s.cfg); }
+          catch (e) { console.error("[jumpscare] could not open scare:", e); scaring = false; }
           break;
         }
       } else {
-        fired.delete(s.item.id); // re-arm after they leave
+        fired.delete(id);
       }
     }
+  } catch (e) {
+    console.error("[jumpscare] check failed:", e);
   } finally {
     running = false;
     if (again) { again = false; check(); }
   }
 }
 
-/* ---------- fog reveal: local Light items for creatures with range > 0 (not jumpscare) ---------- */
+/* ---------- fog reveal: local lights for creatures with range > 0 (not jumpscare) ---------- */
 async function syncLights() {
   const dpi = await OBR.scene.grid.getDpi();
   const want = new Map();
@@ -132,7 +112,7 @@ OBR.onReady(async () => {
         id: SETTINGS_MODAL,
         url: `${base("token.html")}?id=${encodeURIComponent(ctx.items[0].id)}`,
         width: 420,
-        height: 640,
+        height: 700,
       }),
   });
 
@@ -140,13 +120,16 @@ OBR.onReady(async () => {
   applyRoom(await OBR.room.getMetadata());
   OBR.room.onMetadataChange((md) => { applyRoom(md); check(); });
 
+  // Players: one click per session so the browser lets us play sound later
+  if ((await OBR.player.getRole()) !== "GM") {
+    OBR.modal.open({ id: ENABLE_MODAL, url: base("enable.html"), width: 320, height: 150 }).catch(() => {});
+  }
+
   const start = async () => {
-    // clear leftovers from a previous session
     const old = await OBR.scene.local.getItems((i) => i.metadata?.[LIGHT_TAG]);
     if (old.length) await OBR.scene.local.deleteItems(old.map((i) => i.id));
     lightFor.clear();
-
-    const update = (its) => { items = its; syncLights(); check(); };
+    const update = (its) => { items = its; syncLights().catch((e) => console.warn("[jumpscare] lights:", e)); check(); };
     update(await OBR.scene.items.getItems());
     OBR.scene.items.onChange(update);
   };
